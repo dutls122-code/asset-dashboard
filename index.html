@@ -441,7 +441,8 @@
   const STORAGE_KEY = "asset-dashboard-sheet-config";
   const DEFAULT_CONFIG = {
     sheetId: "1yq_UYR4SvaYtQ9lkCUtax6qtjy29RmcLhiLszds2RkM",
-    gid: "878371884"
+    gid: "878371884",
+    clientId: "940189415178-n55dlo2l60fmiug4nfemgn34tug86mmg.apps.googleusercontent.com"
   };
 
   // ---------- 비밀번호 게이트 ----------
@@ -500,11 +501,11 @@
         }
       }
     }catch(e){ /* 저장된 값 없음 - 정상 */ }
-    // 2) URL 파라미터
+    // 2) URL 파라미터 (설정 화면에서 직접 값을 바꾼 경우에만 존재)
     const urlCfg = getUrlConfig();
     if(urlCfg) return urlCfg;
-    // 3) 기본값 (시트만 채워져 있고 클라이언트 ID는 비어있음 - 최초 설정 필요)
-    return { ...DEFAULT_CONFIG, clientId: '' };
+    // 3) 기본값 (시트 ID·gid·클라이언트 ID 모두 코드에 고정되어 있어, 주소가 항상 깔끔하게 유지됨)
+    return DEFAULT_CONFIG;
   }
 
   async function saveConfig(cfg){
