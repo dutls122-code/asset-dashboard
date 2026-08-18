@@ -197,11 +197,18 @@
   .donut-wrap{ position:relative; width:180px; height:180px; flex-shrink:0; margin:0 auto; }
   .donut-center{
     position:absolute; inset:0; display:flex; flex-direction:column; align-items:center; justify-content:center;
+    pointer-events:none;
   }
   .donut-center-label{ font-size:11px; color:var(--ink-soft); margin-bottom:2px; }
   .donut-center-value{ font-family:'Pretendard','Noto Sans KR',sans-serif; font-weight:800; font-size:16px; color:var(--sage-deep); }
+  .donut-seg{ cursor:pointer; transition: opacity .18s ease, stroke-width .18s ease; }
+  .donut-seg:hover{ opacity:.85; }
+  .donut-seg.dim{ opacity:.18; }
+  .donut-seg.active{ stroke-width:19; }
   .legend{ flex:1; min-width:220px; display:flex; flex-direction:column; gap:10px; }
-  .legend-row{ display:flex; align-items:center; gap:10px; font-size:13px; }
+  .legend-row{ display:flex; align-items:center; gap:10px; font-size:13px; cursor:pointer; padding:4px 6px; border-radius:6px; transition:.15s ease; }
+  .legend-row:hover{ background:var(--paper-deep); }
+  .legend-row.active{ background:var(--gold-soft); }
   .legend-dot{ width:10px; height:10px; border-radius:3px; flex-shrink:0; }
   .legend-name{ flex:1; color:var(--ink); }
   .legend-sub{ color:var(--ink-soft); font-size:11px; font-weight:400; }
@@ -211,6 +218,15 @@
     .portfolio-body{ flex-direction:column; }
     .legend-amt{ width:auto; }
   }
+
+  /* 통장별 현황 - 구분 그룹 헤더 */
+  .group-header-row td{
+    background:var(--paper-deep); padding:9px 14px; border-bottom:1px solid var(--line);
+    font-size:12px;
+  }
+  .group-dot{ display:inline-block; width:8px; height:8px; border-radius:2px; margin-right:8px; vertical-align:middle; }
+  .group-name{ font-weight:700; color:var(--sage-deep); vertical-align:middle; }
+  .group-total{ float:right; font-family:'Pretendard','Noto Sans KR',sans-serif; font-weight:700; color:var(--ink-soft); }
 
   footer.note{
     margin-top:22px; font-size:11.5px; color:var(--ink-soft); text-align:center; line-height:1.6;
@@ -571,17 +587,27 @@
     const header = rows[headerIdx].map(c=>String(c||'').trim());
     const col = name => header.indexOf(name);
     const idx = {
+      category: col('구분'),
       type: col('통장 종류'), bank: col('은행명'), acct: col('계좌번호'),
       owner: col('예금주'), balance: col('현재 잔액'), rate: col('수익률'),
       updated: col('최종 업데이트일'), memo: col('메모')
     };
     const items = [];
+    let lastCategory = '';
     for(let i=headerIdx+1; i<rows.length; i++){
       const r = rows[i];
       if(!r) continue;
       const type = (r[idx.type]||'').trim();
       if(!type) break; // 합계 행 등 도달 시 종료
+      // 구글시트 병합 셀은 첫 행에만 값이 채워지므로, 빈 칸은 위에서부터 이어받는다
+      let category = '';
+      if(idx.category !== -1){
+        const catCell = (r[idx.category]||'').trim();
+        if(catCell) lastCategory = catCell;
+        category = lastCategory;
+      }
       items.push({
+        category,
         type,
         bank: (r[idx.bank]||'').trim(),
         acct: (r[idx.acct]||'').trim(),
@@ -606,22 +632,36 @@
     return sign + pct.toFixed(1) + '%';
   }
 
-  const PORTFOLIO_CATEGORIES = [
-    { key: 'checking', name: '입출금통장', color: '#3F6C51', keywords: ['모임통장','입출금'] },
-    { key: 'emergency', name: '비상금',   color: '#B4863C', keywords: ['모임금고','비상금'] },
-    { key: 'invest',    name: '투자',     color: '#7A6BAF', keywords: ['isa','투자'] },
-    { key: 'savings',   name: '예,적금',  color: '#4A90A4', keywords: ['청년미래적금','예금','주택청약','적금'] },
-    { key: 'pension',   name: '연금',     color: '#C0634A', keywords: ['irp','퇴직연금','연금'] },
-    { key: 'etc',       name: '기타',     color: '#8A8F87', keywords: [] }
-  ];
+  const KNOWN_CATEGORY_COLORS = {
+    '입출금': '#3F6C51', '입출금통장': '#3F6C51',
+    '비상금': '#B4863C',
+    '투자': '#7A6BAF',
+    '예,적금': '#4A90A4', '예적금': '#4A90A4',
+    '연금': '#C0634A'
+  };
+  const FALLBACK_PALETTE = ['#8A9A5B','#B4547A','#5B7B9A','#8A8F87'];
 
-  function categorize(type){
-    const t = String(type||'').toLowerCase();
-    for(const cat of PORTFOLIO_CATEGORIES){
-      if(cat.keywords.some(k => t.includes(k.toLowerCase()))) return cat;
-    }
-    return PORTFOLIO_CATEGORIES[PORTFOLIO_CATEGORIES.length-1]; // 기타
+  // 시트에 나온 순서 그대로, 연속된 같은 '구분' 값끼리 묶는다 (병합 셀 그룹과 동일)
+  function groupByCategory(items){
+    const groups = [];
+    let current = null;
+    items.forEach(it => {
+      const name = it.category || '미분류';
+      if(!current || current.name !== name){
+        current = { name, items: [], balance: 0 };
+        groups.push(current);
+      }
+      current.items.push(it);
+      current.balance += (it.balance || 0);
+    });
+    let fallbackIdx = 0;
+    groups.forEach(g => {
+      g.color = KNOWN_CATEGORY_COLORS[g.name] || FALLBACK_PALETTE[fallbackIdx++ % FALLBACK_PALETTE.length];
+    });
+    return groups;
   }
+
+  let donutActiveKey = null;
 
   function renderPortfolio(items, total){
     const withBalance = items.filter(it => it.balance && it.balance > 0);
@@ -630,40 +670,59 @@
       return;
     }
     portfolioSection.style.display = 'block';
-    donutTotal.textContent = fmtWon(total);
+    donutActiveKey = null;
 
-    // 계좌를 카테고리별로 묶어서 합산
-    const grouped = new Map();
-    withBalance.forEach(it => {
-      const cat = categorize(it.type);
-      if(!grouped.has(cat.key)) grouped.set(cat.key, { name: cat.name, color: cat.color, balance: 0, members: [] });
-      const g = grouped.get(cat.key);
-      g.balance += it.balance;
-      g.members.push(it.type);
-    });
-    const groups = Array.from(grouped.values())
-      .filter(g => g.balance > 0)
-      .sort((a,b) => b.balance - a.balance);
+    const groups = groupByCategory(withBalance).filter(g => g.balance > 0);
 
     const r = 50, cx = 60, cy = 60, circumference = 2 * Math.PI * r;
     let offsetAcc = 0;
     const circles = [];
     const legendRows = [];
-    groups.forEach(g => {
+    groups.forEach((g, i) => {
       const pct = g.balance / total;
       const dash = pct * circumference;
-      circles.push(`<circle cx="${cx}" cy="${cy}" r="${r}" fill="none" stroke="${g.color}" stroke-width="16" stroke-dasharray="${dash} ${circumference - dash}" stroke-dashoffset="${-offsetAcc}" transform="rotate(-90 ${cx} ${cy})"></circle>`);
+      const key = 'seg-' + i;
+      g.key = key; g.pct = pct;
+      circles.push(`<circle class="donut-seg" data-key="${key}" cx="${cx}" cy="${cy}" r="${r}" fill="none" stroke="${g.color}" stroke-width="16" stroke-dasharray="${dash} ${circumference - dash}" stroke-dashoffset="${-offsetAcc}" transform="rotate(-90 ${cx} ${cy})"></circle>`);
       offsetAcc += dash;
+      const members = g.items.map(it => it.type).join(', ');
       legendRows.push(`
-        <div class="legend-row">
+        <div class="legend-row" data-key="${key}">
           <span class="legend-dot" style="background:${g.color}"></span>
-          <span class="legend-name">${escapeHtml(g.name)}<span class="legend-sub"> · ${escapeHtml(g.members.join(', '))}</span></span>
+          <span class="legend-name">${escapeHtml(g.name)}<span class="legend-sub"> · ${escapeHtml(members)}</span></span>
           <span class="legend-pct">${(pct*100).toFixed(1)}%</span>
           <span class="legend-amt">${fmtWon(g.balance)}</span>
         </div>`);
     });
     donutSvg.innerHTML = circles.join('');
     portfolioLegend.innerHTML = legendRows.join('');
+
+    function showTotal(){
+      donutTotal.parentElement.querySelector('.donut-center-label').textContent = '총 자산';
+      donutTotal.textContent = fmtWon(total);
+      donutSvg.querySelectorAll('.donut-seg').forEach(el => el.classList.remove('dim','active'));
+      portfolioLegend.querySelectorAll('.legend-row').forEach(el => el.classList.remove('active'));
+      donutActiveKey = null;
+    }
+    function showGroup(key){
+      const g = groups.find(x => x.key === key);
+      if(!g) return;
+      donutTotal.parentElement.querySelector('.donut-center-label').textContent = g.name;
+      donutTotal.textContent = (g.pct*100).toFixed(1) + '%';
+      donutSvg.querySelectorAll('.donut-seg').forEach(el => el.classList.toggle('dim', el.dataset.key !== key));
+      portfolioLegend.querySelectorAll('.legend-row').forEach(el => el.classList.toggle('active', el.dataset.key === key));
+      donutActiveKey = key;
+    }
+    function toggle(key){
+      if(donutActiveKey === key) showTotal(); else showGroup(key);
+    }
+    donutSvg.querySelectorAll('.donut-seg').forEach(el => {
+      el.addEventListener('click', () => toggle(el.dataset.key));
+    });
+    portfolioLegend.querySelectorAll('.legend-row').forEach(el => {
+      el.addEventListener('click', () => toggle(el.dataset.key));
+    });
+    showTotal();
   }
 
   function render(items){
@@ -683,22 +742,34 @@
       return;
     }
 
-    const rowsHtml = items.map(it => `
-      <tr>
-        <td>
-          <div class="acct-type">${escapeHtml(it.type)}</div>
-          ${it.owner ? `<div class="acct-owner">${escapeHtml(it.owner)}</div>` : ''}
-        </td>
-        <td>
-          ${it.bank ? `<span class="bank-tag">${escapeHtml(it.bank)}</span><br>` : ''}
-          <span class="muted">${escapeHtml(it.acct || '-')}</span>
-        </td>
-        <td class="num">${fmtWon(it.balance)}</td>
-        <td class="num ${it.rate!==null ? (it.rate<0?'neg':'pos') : 'muted'}">${it.rate!==null ? fmtPct(it.rate) : '-'}</td>
-        <td class="muted">${escapeHtml(it.updated || '-')}</td>
-        <td class="muted">${escapeHtml(it.memo || '-')}</td>
-      </tr>
-    `).join('');
+    const groups = groupByCategory(items);
+    const rowsHtml = groups.map(g => {
+      const groupHeader = `
+        <tr class="group-header-row">
+          <td colspan="6">
+            <span class="group-dot" style="background:${g.color}"></span>
+            <span class="group-name">${escapeHtml(g.name)}</span>
+            <span class="group-total">${fmtWon(g.balance)}</span>
+          </td>
+        </tr>`;
+      const rows = g.items.map(it => `
+        <tr>
+          <td>
+            <div class="acct-type">${escapeHtml(it.type)}</div>
+            ${it.owner ? `<div class="acct-owner">${escapeHtml(it.owner)}</div>` : ''}
+          </td>
+          <td>
+            ${it.bank ? `<span class="bank-tag">${escapeHtml(it.bank)}</span><br>` : ''}
+            <span class="muted">${escapeHtml(it.acct || '-')}</span>
+          </td>
+          <td class="num">${fmtWon(it.balance)}</td>
+          <td class="num ${it.rate!==null ? (it.rate<0?'neg':'pos') : 'muted'}">${it.rate!==null ? fmtPct(it.rate) : '-'}</td>
+          <td class="muted">${escapeHtml(it.updated || '-')}</td>
+          <td class="muted">${escapeHtml(it.memo || '-')}</td>
+        </tr>
+      `).join('');
+      return groupHeader + rows;
+    }).join('');
 
     tableWrap.innerHTML = `
       <table>
