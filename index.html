@@ -228,6 +228,26 @@
   .group-name{ font-weight:700; color:var(--sage-deep); vertical-align:middle; }
   .group-total{ float:right; font-family:'Pretendard','Noto Sans KR',sans-serif; font-weight:700; color:var(--ink-soft); }
 
+  /* 페이지 탭 */
+  .page-tabs{ display:flex; gap:6px; margin-bottom:20px; }
+  .page-tab{
+    background:var(--white); border:1px solid var(--line); border-radius:999px;
+    padding:9px 18px; font-size:13.5px; font-weight:600; color:var(--ink-soft); cursor:pointer;
+    font-family:'Pretendard','Noto Sans KR',sans-serif; transition:.15s ease;
+  }
+  .page-tab:hover{ border-color:var(--sage); color:var(--sage-deep); }
+  .page-tab.active{ background:var(--sage); border-color:var(--sage); color:#fff; }
+  .card .value.neg{ color:var(--red); }
+
+  /* 가계부 - 호버 툴팁 */
+  #budget-tooltip{
+    position:fixed; pointer-events:none; z-index:60; display:none;
+    background:var(--sage-deep); color:#fff; padding:8px 12px; border-radius:6px;
+    font-size:12.5px; line-height:1.5; box-shadow:0 8px 20px rgba(0,0,0,0.25);
+    font-family:'Pretendard','Noto Sans KR',sans-serif; white-space:nowrap;
+  }
+  #budget-tooltip b{ font-weight:800; }
+
   footer.note{
     margin-top:22px; font-size:11.5px; color:var(--ink-soft); text-align:center; line-height:1.6;
   }
@@ -325,6 +345,11 @@
         <small>"자산현황" 탭을 열었을 때 주소창 끝의 <b>#gid=숫자</b> 부분입니다.</small>
       </div>
       <div class="field">
+        <label>가계부 시트(gid) 번호 <span style="font-weight:400;color:var(--ink-soft);">(선택)</span></label>
+        <input id="input-budget-gid" placeholder="예: 123456789">
+        <small>"거래내역" 탭을 열었을 때 주소창 끝의 <b>#gid=숫자</b> 부분입니다. 가계부 페이지를 쓰려면 입력하세요.</small>
+      </div>
+      <div class="field">
         <label>Google OAuth 클라이언트 ID</label>
         <input id="input-client-id" placeholder="예: 1234567890-abc...apps.googleusercontent.com">
         <small>아래 안내대로 구글 클라우드 콘솔에서 발급받은 값을 붙여넣으세요.</small>
@@ -377,6 +402,12 @@
       </div>
     </header>
 
+    <div class="page-tabs">
+      <button class="page-tab active" id="tab-asset" data-page="asset">자산 현황</button>
+      <button class="page-tab" id="tab-budget" data-page="budget">가계부</button>
+    </div>
+
+    <div id="page-asset" class="page">
     <div class="cards" id="cards">
       <div class="card">
         <div class="label">총 자산</div>
@@ -427,12 +458,40 @@
         </div>
       </div>
     </div>
+    </div>
+
+    <div id="page-budget" class="page" style="display:none;">
+      <div class="cards" id="budget-cards">
+        <div class="card">
+          <div class="label" id="budget-income-label">이번 달 총수입</div>
+          <div class="value" id="budget-income">–</div>
+        </div>
+        <div class="card">
+          <div class="label" id="budget-expense-label">이번 달 총지출</div>
+          <div class="value neg" id="budget-expense">–</div>
+        </div>
+        <div class="card">
+          <div class="label">이번 달 저축액</div>
+          <div class="value small" id="budget-saving">–</div>
+        </div>
+      </div>
+
+      <div class="ledger">
+        <div class="ledger-head">
+          <h2>카테고리별 지출</h2>
+        </div>
+        <div id="budget-body">
+          <div class="empty">우측 상단의 <b>업데이트</b> 버튼을 눌러 가계부를 불러오세요.</div>
+        </div>
+      </div>
+    </div>
 
     <footer class="note">
       이 대시보드는 구글시트를 직접 조회만 하며, 잔액을 따로 저장하지 않습니다.<br>
       실제 접근 제한은 구글 계정 권한으로 이루어지며, 숫자 비밀번호는 화면을 가리는 보조 장치입니다.
     </footer>
   </div>
+  <div id="budget-tooltip"></div>
 
 <script>
 (function(){
@@ -476,17 +535,20 @@
   const saveBtn = document.getElementById('settings-save');
   const inputSheetId = document.getElementById('input-sheet-id');
   const inputGid = document.getElementById('input-gid');
+  const inputBudgetGid = document.getElementById('input-budget-gid');
   const inputClientId = document.getElementById('input-client-id');
 
   function getUrlConfig(){
     const p = new URLSearchParams(location.search);
     const id = p.get('sheetId'); const gid = p.get('gid'); const clientId = p.get('clientId');
-    return (id) ? { sheetId:id, gid: gid || '0', clientId: clientId || '' } : null;
+    const budgetGid = p.get('budgetGid');
+    return (id) ? { sheetId:id, gid: gid || '0', clientId: clientId || '', budgetGid: budgetGid || '' } : null;
   }
   function setUrlConfig(cfg){
     const p = new URLSearchParams(location.search);
     p.set('sheetId', cfg.sheetId); p.set('gid', cfg.gid || '0');
     if(cfg.clientId) p.set('clientId', cfg.clientId);
+    if(cfg.budgetGid) p.set('budgetGid', cfg.budgetGid); else p.delete('budgetGid');
     history.replaceState(null, '', location.pathname + '?' + p.toString());
   }
 
@@ -519,7 +581,7 @@
 
   openSettingsBtn.addEventListener('click', async ()=>{
     const cfg = await loadConfig();
-    if(cfg){ inputSheetId.value = cfg.sheetId||''; inputGid.value = cfg.gid||''; inputClientId.value = cfg.clientId||''; }
+    if(cfg){ inputSheetId.value = cfg.sheetId||''; inputGid.value = cfg.gid||''; inputBudgetGid.value = cfg.budgetGid||''; inputClientId.value = cfg.clientId||''; }
     settingsOverlay.style.display = 'flex';
   });
   cancelBtn.addEventListener('click', ()=> settingsOverlay.style.display='none');
@@ -528,10 +590,11 @@
   saveBtn.addEventListener('click', async ()=>{
     const sheetId = inputSheetId.value.trim();
     const gid = inputGid.value.trim() || '0';
+    const budgetGid = inputBudgetGid.value.trim();
     const clientId = inputClientId.value.trim();
     if(!sheetId){ inputSheetId.focus(); return; }
     if(!clientId){ inputClientId.focus(); return; }
-    const cfg = { sheetId, gid, clientId };
+    const cfg = { sheetId, gid, budgetGid, clientId };
     await saveConfig(cfg);
     currentCfg = cfg;
     accessToken = null;
@@ -871,6 +934,7 @@
       }
     }catch(e){ /* 이메일 표시는 부가 기능이라 실패해도 무시 */ }
     fetchAndRender();
+    if(currentPage === 'budget'){ budgetLoadedOnce = true; fetchBudgetAndRender(); }
   }
 
   async function resolveSheetName(sheetId, gid){
@@ -881,6 +945,186 @@
     const match = (data.sheets||[]).find(s => String(s.properties.sheetId) === String(gid));
     if(!match) throw new Error('SHEET_NOT_FOUND');
     return match.properties.title;
+  }
+
+  // ---------- 페이지 전환 (자산 현황 / 가계부) ----------
+  let currentPage = 'asset';
+  const pageAsset = document.getElementById('page-asset');
+  const pageBudget = document.getElementById('page-budget');
+  const tabAsset = document.getElementById('tab-asset');
+  const tabBudget = document.getElementById('tab-budget');
+  let budgetLoadedOnce = false;
+
+  function switchPage(page){
+    currentPage = page;
+    pageAsset.style.display = page === 'asset' ? 'block' : 'none';
+    pageBudget.style.display = page === 'budget' ? 'block' : 'none';
+    tabAsset.classList.toggle('active', page === 'asset');
+    tabBudget.classList.toggle('active', page === 'budget');
+    if(page === 'budget' && !budgetLoadedOnce && accessToken){
+      budgetLoadedOnce = true;
+      fetchBudgetAndRender();
+    }
+  }
+  tabAsset.addEventListener('click', ()=> switchPage('asset'));
+  tabBudget.addEventListener('click', ()=> switchPage('budget'));
+
+  // ---------- 가계부 데이터 파싱/렌더 ----------
+  const budgetIncomeEl = document.getElementById('budget-income');
+  const budgetExpenseEl = document.getElementById('budget-expense');
+  const budgetSavingEl = document.getElementById('budget-saving');
+  const budgetBody = document.getElementById('budget-body');
+  const budgetTooltip = document.getElementById('budget-tooltip');
+  const BUDGET_PALETTE = ['#3F6C51','#B4863C','#7A6BAF','#C0634A','#4A90A4','#8A9A5B','#B4547A','#5B7B9A','#D08C3E','#6B8E9F','#9C6B4F','#7F9B6B'];
+  const REQUIRED_BUDGET_COLS = ['구분','대분류','금액'];
+
+  function findBudgetHeaderRow(rows){
+    for(let i=0;i<rows.length;i++){
+      const r = (rows[i]||[]).map(c=>String(c||'').trim());
+      if(REQUIRED_BUDGET_COLS.every(c=>r.includes(c))) return i;
+    }
+    return -1;
+  }
+
+  function parseBudgetSheet(rows){
+    const headerIdx = findBudgetHeaderRow(rows);
+    if(headerIdx === -1) throw new Error('HEADER_NOT_FOUND');
+    const header = rows[headerIdx].map(c=>String(c||'').trim());
+    const col = name => header.indexOf(name);
+    const idx = {
+      date: col('날짜'), gubun: col('구분'), category: col('대분류'),
+      content: col('내용'), amount: col('금액'), payment: col('결제수단'),
+      payer: col('부담'), memo: col('메모')
+    };
+    const items = [];
+    for(let i=headerIdx+1; i<rows.length; i++){
+      const r = rows[i];
+      if(!r) continue;
+      const date = (r[idx.date]||'').trim();
+      const gubun = (r[idx.gubun]||'').trim();
+      if(!date && !gubun) break; // 빈 템플릿 행 도달 시 종료
+      if(!gubun) continue;
+      items.push({
+        date,
+        gubun,
+        category: (r[idx.category]||'').trim(),
+        content: (r[idx.content]||'').trim(),
+        amount: toNumber(r[idx.amount]),
+        payment: (r[idx.payment]||'').trim(),
+        payer: (r[idx.payer]||'').trim(),
+        memo: (r[idx.memo]||'').trim()
+      });
+    }
+    return items;
+  }
+
+  function renderBudget(items){
+    const now = new Date();
+    const ym = now.getFullYear() + '-' + String(now.getMonth()+1).padStart(2,'0');
+    const thisMonth = items.filter(it => it.date && it.date.startsWith(ym));
+
+    const income = thisMonth.filter(it => it.gubun === '수입').reduce((s,it)=> s + (it.amount||0), 0);
+    const expense = thisMonth.filter(it => it.gubun === '지출').reduce((s,it)=> s + (it.amount||0), 0);
+    const saving = income - expense;
+
+    budgetIncomeEl.textContent = fmtWon(income);
+    budgetExpenseEl.textContent = fmtWon(expense);
+    budgetSavingEl.textContent = fmtWon(saving);
+    budgetSavingEl.className = 'value small' + (saving < 0 ? ' neg' : '');
+
+    const expenseItems = thisMonth.filter(it => it.gubun === '지출' && it.amount && it.amount > 0);
+    if(expenseItems.length === 0){
+      budgetBody.innerHTML = '<div class="empty">이번 달 지출 내역이 아직 없어요.</div>';
+      return;
+    }
+
+    // 카테고리별 합산 (등장 순서대로 색상 고정 배정)
+    const catMap = new Map();
+    expenseItems.forEach(it => {
+      const name = it.category || '기타';
+      if(!catMap.has(name)) catMap.set(name, 0);
+      catMap.set(name, catMap.get(name) + it.amount);
+    });
+    const cats = Array.from(catMap.entries())
+      .map(([name, amt], i) => ({ name, amount: amt, color: BUDGET_PALETTE[i % BUDGET_PALETTE.length] }))
+      .sort((a,b) => b.amount - a.amount);
+
+    const r = 50, cx = 60, cy = 60, circumference = 2 * Math.PI * r;
+    let offsetAcc = 0;
+    const circles = [];
+    const legendRows = [];
+    cats.forEach(c => {
+      const pct = c.amount / expense;
+      const dash = pct * circumference;
+      circles.push(`<circle class="donut-seg" data-name="${escapeHtml(c.name)}" data-amt="${c.amount}" data-pct="${(pct*100).toFixed(1)}" cx="${cx}" cy="${cy}" r="${r}" fill="none" stroke="${c.color}" stroke-width="16" stroke-dasharray="${dash} ${circumference - dash}" stroke-dashoffset="${-offsetAcc}" transform="rotate(-90 ${cx} ${cy})"></circle>`);
+      offsetAcc += dash;
+      legendRows.push(`
+        <div class="legend-row" style="cursor:default;">
+          <span class="legend-dot" style="background:${c.color}"></span>
+          <span class="legend-name">${escapeHtml(c.name)}</span>
+          <span class="legend-pct">${(pct*100).toFixed(1)}%</span>
+          <span class="legend-amt">${fmtWon(c.amount)}</span>
+        </div>`);
+    });
+
+    budgetBody.innerHTML = `
+      <div class="portfolio-body">
+        <div class="donut-wrap">
+          <svg id="budget-donut-svg" viewBox="0 0 120 120" width="180" height="180">${circles.join('')}</svg>
+          <div class="donut-center">
+            <div class="donut-center-label">이번 달 지출</div>
+            <div class="donut-center-value">${fmtWon(expense)}</div>
+          </div>
+        </div>
+        <div class="legend">${legendRows.join('')}</div>
+      </div>`;
+
+    // 호버 시 비율 툴팁
+    budgetBody.querySelectorAll('.donut-seg').forEach(seg => {
+      seg.addEventListener('mousemove', (e)=>{
+        const name = seg.dataset.name, pct = seg.dataset.pct, amt = Number(seg.dataset.amt);
+        budgetTooltip.innerHTML = `<b>${escapeHtml(name)}</b> · ${pct}%<br>${fmtWon(amt)}`;
+        budgetTooltip.style.display = 'block';
+        budgetTooltip.style.left = (e.clientX + 14) + 'px';
+        budgetTooltip.style.top = (e.clientY + 14) + 'px';
+      });
+      seg.addEventListener('mouseleave', ()=>{ budgetTooltip.style.display = 'none'; });
+    });
+  }
+
+  async function fetchBudgetAndRender(){
+    if(!accessToken){ return; }
+    currentCfg = currentCfg || await loadConfig();
+    const cfg = currentCfg;
+    if(!cfg || !cfg.budgetGid){
+      budgetBody.innerHTML = '<div class="empty">가계부 시트(gid)가 설정되지 않았어요. 톱니바퀴 설정에서 입력해 주세요.</div>';
+      return;
+    }
+    refreshBtn.classList.add('spinning');
+    budgetBody.innerHTML = '<div class="loading">가계부를 불러오는 중이에요…</div>';
+    try{
+      const sheetName = await resolveSheetName(cfg.sheetId, cfg.budgetGid);
+      const range = `'${sheetName}'!A1:Z250`;
+      const valuesUrl = `https://sheets.googleapis.com/v4/spreadsheets/${cfg.sheetId}/values/${encodeURIComponent(range)}`;
+      const res = await fetch(valuesUrl, { headers: { Authorization: 'Bearer ' + accessToken } });
+      if(!res.ok) throw { status: res.status };
+      const data = await res.json();
+      const items = parseBudgetSheet(data.values || []);
+      renderBudget(items);
+      syncedLine.textContent = '방금 새로 불러왔어요';
+    }catch(err){
+      if(err && err.status === 401){
+        accessToken = null;
+        showLoginScreen('로그인이 만료됐어요. 다시 로그인해 주세요.');
+        switchPage('asset');
+      } else if(err && err.status === 403){
+        budgetBody.innerHTML = `<div class="err">이 구글 계정은 가계부 시트에 접근할 권한이 없어요.</div>`;
+      } else {
+        budgetBody.innerHTML = `<div class="err">가계부를 불러오지 못했어요. 가계부 시트(gid)가 맞는지 확인해 주세요.</div>`;
+      }
+    }finally{
+      refreshBtn.classList.remove('spinning');
+    }
   }
 
   async function fetchAndRender(){
@@ -929,7 +1173,7 @@
 
   refreshBtn.addEventListener('click', ()=>{
     if(!accessToken){ requestLogin(); return; }
-    fetchAndRender();
+    if(currentPage === 'budget'){ fetchBudgetAndRender(); } else { fetchAndRender(); }
   });
 
   async function initApp(){
